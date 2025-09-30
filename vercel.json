@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "name": "bassam-smart-ai",
+  "builds": [
+    {
+      "src": "main.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb",
+        "runtime": "python3.11"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "main.py"
+    }
+  ],
+  "env": {
+    "PYTHONPATH": "./core",
+    "CACHE_SIZE_MB": "20",
+    "ENABLE_LOCAL_MODELS": "false"
+  },
+  "functions": {
+    "main.py": {
+      "memory": 1024,
+      "maxDuration": 30
+    }
+  }
+}
