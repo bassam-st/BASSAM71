@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>مساعد بسام الذكي</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body{font-family:'Noto Kufi Arabic',sans-serif;background:#f1f5f9;margin:0;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh}
+    #chat{width:90%;max-width:500px;background:#fff;border-radius:20px;box-shadow:0 4px 20px rgba(0,0,0,.1);padding:20px}
+    .msg{margin:8px 0;padding:10px;border-radius:12px;line-height:1.6}
+    .user{background:#e2e8f0;align-self:flex-end}
+    .bot{background:#dcfce7}
+    input{width:100%;padding:10px;border-radius:12px;border:1px solid #ccc;font-size:16px}
+    button{margin-top:8px;padding:10px 16px;border:none;border-radius:12px;background:#16a34a;color:#fff;font-weight:bold;cursor:pointer}
+  </style>
+</head>
+<body>
+  <div id="chat">
+    <div id="log"></div>
+    <input id="q" placeholder="اسأل: كم جمارك الملابس أو التلفزيون...">
+    <button onclick="ask()">إرسال</button>
+  </div>
+  <script src="chat.js"></script>
+</body>
+</html>
