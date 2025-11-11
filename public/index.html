@@ -2,24 +2,34 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <title>مساعد بسام الذكي</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>مساعد بسّام الذكي</title>
   <style>
-    body{font-family:'Noto Kufi Arabic',sans-serif;background:#f1f5f9;margin:0;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh}
-    #chat{width:90%;max-width:500px;background:#fff;border-radius:20px;box-shadow:0 4px 20px rgba(0,0,0,.1);padding:20px}
-    .msg{margin:8px 0;padding:10px;border-radius:12px;line-height:1.6}
-    .user{background:#e2e8f0;align-self:flex-end}
-    .bot{background:#dcfce7}
-    input{width:100%;padding:10px;border-radius:12px;border:1px solid #ccc;font-size:16px}
-    button{margin-top:8px;padding:10px 16px;border:none;border-radius:12px;background:#16a34a;color:#fff;font-weight:bold;cursor:pointer}
+    body{font-family:system-ui,Arial;background:#f6f7fb;margin:0}
+    .wrap{max-width:720px;margin:24px auto;background:#fff;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.08);overflow:hidden}
+    .head{background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;padding:14px 18px;font-weight:900}
+    .chat{padding:14px;max-height:68vh;overflow:auto}
+    .m{margin:8px 0;padding:10px 12px;border-radius:12px;line-height:1.6}
+    .me{background:#e2e8f0;align-self:flex-start}
+    .ai{background:#dcfce7}
+    .row{display:flex;gap:8px;padding:12px;background:#f8fafc;border-top:1px solid #e5e7eb}
+    input{flex:1;padding:12px;border:1px solid #cbd5e1;border-radius:10px}
+    button{padding:12px 14px;border:none;border-radius:10px;background:#16a34a;color:#fff;font-weight:800}
+    .quick{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+    .quick button{background:#e2e8f0;color:#0f172a}
+    a{color:#2563eb;font-weight:700;text-decoration:none}
   </style>
 </head>
 <body>
-  <div id="chat">
-    <div id="log"></div>
-    <input id="q" placeholder="اسأل: كم جمارك الملابس أو التلفزيون...">
-    <button onclick="ask()">إرسال</button>
+  <div class="wrap">
+    <div class="head">🤝 مساعد بسّام الذكي — تجريبي</div>
+    <div id="chat" class="chat"></div>
+    <div class="row">
+      <input id="msg" placeholder="اسأل: كم جمارك الملابس أو التلفزيونات...">
+      <button id="send">إرسال</button>
+    </div>
   </div>
-  <script src="chat.js"></script>
+
+  <script src="./chat.js"></script>
 </body>
 </html>
