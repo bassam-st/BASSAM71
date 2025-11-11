@@ -1,71 +1,89 @@
-(function(){
-  const chat = document.getElementById('chat');
-  const msg  = document.getElementById('msg');
-  const send = document.getElementById('send');
+/* public/chat.js — نسخة نهائية مع إعادة المحاولة و /api/ping */
 
-  const sessionId = (() => {
-    const k = "ai_bassam_session_id";
-    let v = localStorage.getItem(k);
-    if (!v) { v = crypto.randomUUID(); localStorage.setItem(k, v); }
-    return v;
-  })();
+const form = document.querySelector("#chat-form");
+const input = document.querySelector("#chat-input");
+const box  = document.querySelector("#chat-box");
 
-  function addBubble(text, who="ai", open_calc=null, quick=[]) {
-    const div = document.createElement('div');
-    div.className = "m " + (who === "me" ? "me" : "ai");
-    div.innerHTML = text.replace(/\n/g,"<br>");
-    chat.appendChild(div);
+// رسالة فورية في الواجهة
+function pushBubble(text, kind = "bot") {
+  const li = document.createElement("div");
+  li.className = "bubble " + kind;
+  li.innerHTML = text;
+  box.appendChild(li);
+  box.scrollTop = box.scrollHeight;
+}
 
-    if (open_calc) {
-      const link = document.createElement('a');
-      link.href = open_calc;
-      link.textContent = "فتح في الحاسبة";
-      link.style.display = "inline-block";
-      link.style.marginTop = "6px";
-      div.appendChild(document.createElement('br'));
-      div.appendChild(link);
-    }
+// إيقاظ الخادم عند فتح الصفحة
+fetch("/api/ping").catch(()=>{});
 
-    if (quick && quick.length) {
-      const q = document.createElement('div');
-      q.className = "quick";
-      quick.forEach(txt=>{
-        const b = document.createElement('button');
-        b.textContent = txt;
-        b.onclick = ()=>{ msg.value = txt; send.click(); };
-        q.appendChild(b);
+// إرسال السؤال إلى الخادم مع إعادة المحاولة
+async function askServer(text, filled = {}) {
+  const url = "/api/ask";
+  const payload = { query: text, filled };
+
+  // Render قد يحتاج 1-10 ثواني ليصحو من النوم.
+  // نحاول ثلاث مرات: الآن، بعد 1.5ث، بعد 3.5ث. مهلة كل محاولة 12ث.
+  const tries = [0, 1500, 3500];
+  let lastErr;
+
+  for (const waitMs of tries) {
+    if (waitMs) await new Promise(r => setTimeout(r, waitMs));
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12000);
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: ctrl.signal
       });
-      chat.appendChild(q);
-    }
-
-    chat.scrollTop = chat.scrollHeight;
-  }
-
-  async function ask(text){
-    addBubble(text, "me");
-    msg.value = "";
-    try{
-      const r = await fetch("/api/assist", {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({sessionId, text})
-      });
-      const data = await r.json();
-      addBubble(data.reply || "—", "ai", data.open_calc, data.quick);
-    }catch(e){
-      addBubble("تعذر الاتصال بالخادم.", "ai");
+      clearTimeout(timer);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.json();
+    } catch (e) {
+      lastErr = e;
     }
   }
+  throw lastErr || new Error("network");
+}
 
-  send.addEventListener("click", ()=>{
-    const t = msg.value.trim();
-    if (!t) return;
-    ask(t);
-  });
-  msg.addEventListener("keydown", e=>{
-    if(e.key==="Enter"){ e.preventDefault(); send.click(); }
-  });
-
-  // رسالة ترحيب
-  addBubble("أهلًا! اسألني مثل: <b>كم جمارك الملابس</b>، <b>كم جمارك شاشه 50 بوصه</b>، <b>كم جمارك الحديد</b>، <b>كم جمارك البطاريات</b>.");
+// رندر رسالة النظام الترحيبية مرة واحدة
+(function greetOnce(){
+  const greeted = sessionStorage.getItem("ai_greeted");
+  if (!greeted) {
+    pushBubble("أهلًا! اسألني مثل: كم جمارك الملابس، كم جمارك شاشة 50 بوصة، كم جمارك الحديد، كم جمارك البطاريات.");
+    sessionStorage.setItem("ai_greeted", "1");
+  }
 })();
+
+// التعامل مع الإرسال
+form?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = (input.value || "").trim();
+  if (!text) return;
+  pushBubble(text, "user");
+  input.value = "";
+
+  // مؤشر انتظار
+  const thinking = document.createElement("div");
+  thinking.className = "bubble bot";
+  thinking.textContent = "⏳ جاري المعالجة…";
+  box.appendChild(thinking);
+  box.scrollTop = box.scrollHeight;
+
+  try {
+    const res = await askServer(text);
+    // الخادم يعيد { replyHtml: "...", openCalcUrl?: "..." }
+    thinking.remove();
+    if (res && res.replyHtml) {
+      pushBubble(res.replyHtml, "bot");
+    } else if (res && res.reply) {
+      pushBubble(String(res.reply), "bot");
+    } else {
+      pushBubble("لم أفهم الرد من الخادم.", "bot");
+    }
+  } catch (err) {
+    thinking.remove();
+    pushBubble("تعذّر الاتصال بالخادم.", "bot");
+  }
+});
