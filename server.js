@@ -16,6 +16,7 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static("public"));
 
+// 🧩 ملف الأسعار
 const pricesPath = "./prices/fallback_prices_catalog.json";
 let CATALOG = [];
 try {
@@ -25,6 +26,7 @@ try {
   CATALOG = [];
 }
 
+// 🔤 توابع مساعدة
 const norm = s => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
 
 function applySynonyms(q) {
@@ -44,6 +46,7 @@ function usdToCustomsYer(usd, ratePct) {
   return Math.round(usd * EXCHANGE_RATE_YER * factor);
 }
 
+// 🔎 بحث ذكي بالتقريب
 let fuse = new Fuse(CATALOG, {
   keys: ["name", "notes"],
   includeScore: true,
@@ -59,7 +62,7 @@ function detectIntent(text) {
   return null;
 }
 
-// -- NEW: اختيار صنف الرولات حسب النوع (شفافة/مطبوعه)
+// 🧩 اختيار صنف الرولات (شفافة/مطبوعه)
 function refineRollItem(baseQuery, rollType) {
   if (!rollType) return null;
   const tokens = ROLLS_TYPES[rollType] || [];
@@ -86,22 +89,18 @@ function computeUSD(item, filled) {
 
   if (filled.kind === "pcs") {
     if (filled.count && Number(filled.count) > 0) return Number(filled.count) * price;
-    if (filled.cartons && filled.perCarton) {
+    if (filled.cartons && filled.perCarton)
       return Number(filled.cartons) * Number(filled.perCarton) * price;
-    }
     return NaN;
   }
 
   if (unit === "dz" || filled.kind === "dz") {
-    if (filled.cartons && filled.dzPerCarton) {
-      const dozens = Number(filled.cartons) * Number(filled.dzPerCarton);
-      return dozens * price;
-    }
+    if (filled.cartons && filled.dzPerCarton)
+      return Number(filled.cartons) * Number(filled.dzPerCarton) * price;
     if (filled.pieces) return (Number(filled.pieces) / 12) * price;
     return NaN;
   }
 
-  // وزن (كجم/طن) — الرولات في قائمتك عادة للطن
   if (filled.kind === "kgOrTon" || unit === "kg" || unit === "ton" || filled.kind === "rolls") {
     if (unit === "ton") {
       if (filled.kg) return (Number(filled.kg) / 1000) * price;
@@ -128,24 +127,22 @@ function computeUSD(item, filled) {
 function buildNextStepOrResult({ item, query, filled }) {
   const intent = detectIntent(item?.name || query) || { kind: null };
 
-  if (intent.kind === "tv" && !filled.inches) {
+  if (intent.kind === "tv" && !filled.inches)
     return { ask: "كم بوصة للشاشة؟ (اكتب رقم مثل 32 أو 43)" };
-  }
 
   if (intent.kind === "pcs") {
-    if (!filled.count && !(filled.cartons && filled.perCarton)) {
+    if (!filled.count && !(filled.cartons && filled.perCarton))
       return {
-        ask: "أحسب بالحبة مباشرة أم بالكرتون؟",
+        ask: "أحسب بالحبة أم بالكرتون؟",
         choices: [
           "بالحبة — اكتب: عدد الحبات = 24",
           "بالكرتون — اكتب: الكراتين = 2 و الحبات/كرتون = 12"
         ]
       };
-    }
   }
 
   if (intent.kind === "dz") {
-    if (!(filled.cartons && filled.dzPerCarton) && !filled.pieces) {
+    if (!(filled.cartons && filled.dzPerCarton) && !filled.pieces)
       return {
         ask: "أحسب بالدرزن أم بالحبات؟",
         choices: [
@@ -153,33 +150,23 @@ function buildNextStepOrResult({ item, query, filled }) {
           "بالحبات — اكتب: الحبات = 120"
         ]
       };
-    }
   }
 
   if (intent.kind === "kgOrTon") {
-    if (!filled.kg && !filled.tons) {
-      return { ask: "تحب أحسب لك بالكيلو أم بالطن؟ (اكتب: كجم = 500 أو أطنان = 2)" };
-    }
+    if (!filled.kg && !filled.tons)
+      return { ask: "تحب أحسب بالكيلو أم بالطن؟ (اكتب: كجم = 500 أو أطنان = 2)" };
   }
 
-  // NEW: رولات — نحتاج النوع أولاً، ثم الوزن
   if (intent.kind === "rolls") {
-    if (!filled.rollType) {
-      return {
-        ask: "نوع الرولات؟ (شفافة أم مطبوعة)",
-        choices: ["شفافة", "مطبوعه"]
-      };
-    }
-    if (!filled.kg && !filled.tons) {
-      return { ask: "تحب أحسب لك بالكيلو أم بالطن؟ (اكتب: كجم = 500 أو أطنان = 2)" };
-    }
+    if (!filled.rollType)
+      return { ask: "نوع الرولات؟ (شفافة أم مطبوعة)", choices: ["شفافة", "مطبوعه"] };
+    if (!filled.kg && !filled.tons)
+      return { ask: "تحب أحسب بالكيلو أم بالطن؟ (اكتب: كجم = 500 أو أطنان = 2)" };
   }
 
-  // نحسب
   const usd = computeUSD(item, { ...filled, kind: intent.kind });
-  if (!(usd > 0)) {
-    return { ask: "أحتاج تفاصيل أكثر لإكمال الحساب (أعد كتابة القيم بالنمط الموضح)." };
-  }
+  if (!(usd > 0)) return { ask: "أحتاج تفاصيل أكثر لإكمال الحساب." };
+
   const ratePct = parseRate(item.notes);
   const yer = usdToCustomsYer(usd, ratePct);
   return {
@@ -194,6 +181,10 @@ function buildNextStepOrResult({ item, query, filled }) {
   };
 }
 
+// ✅ اختبار الاتصال
+app.get("/api/ping", (req, res) => res.json({ pong: true, status: "AI server ready ✅" }));
+
+// 💬 نقطة التحدث
 app.post("/api/ask", (req, res) => {
   try {
     let { query, filled = {} } = req.body || {};
@@ -202,12 +193,13 @@ app.post("/api/ask", (req, res) => {
     const qSyn = applySynonyms(query);
     let found = fuse.search(qSyn);
     if (!found.length || found[0].score > 0.45) {
-      return res.json({ reply: "لم أجد هذا الصنف في القائمة. جرّب اسمًا أقرب أو افتح قائمة الأسعار." });
+      return res.json({
+        reply: "لم أجد هذا الصنف في القائمة. جرّب اسمًا أقرب أو افتح قائمة الأسعار."
+      });
     }
 
     let item = found[0].item;
 
-    // NEW: لو السؤال عن "رولات" ومعك rollType، نعيد الاختيار لصنف مطابق (شفافة/مطبوعه)
     const intent = detectIntent(qSyn);
     if (intent?.kind === "rolls" && filled.rollType) {
       const refined = refineRollItem(qSyn, filled.rollType);
@@ -215,13 +207,11 @@ app.post("/api/ask", (req, res) => {
     }
 
     const step = buildNextStepOrResult({ item, query: qSyn, filled });
-    if (step.ask) return res.json({ ask: step.ask, choices: step.choices || null, matched: item.name });
+    if (step.ask)
+      return res.json({ ask: step.ask, choices: step.choices || null, matched: item.name });
 
     const r = step.result;
-    const text =
-      `السعر التقديري: ${r.usd}$ ⇒ رسوم تقريبية: ${r.yer.toLocaleString()} ريال يمني (فئة ${r.ratePct}%).\n` +
-      `استخدمت: سعر الصرف ${r.exchange} × معامل ${r.factor}.\n` +
-      `الصنف: ${r.item.name} — الوحدة: ${r.item.unit}.`;
+    const text = `السعر التقديري: ${r.usd}$ ⇒ رسوم تقريبية: ${r.yer.toLocaleString()} ريال يمني (فئة ${r.ratePct}%).\nاستخدمت: سعر الصرف ${r.exchange} × معامل ${r.factor}.\nالصنف: ${r.item.name} — الوحدة: ${r.item.unit}.`;
 
     return res.json({
       reply: text,
@@ -233,18 +223,5 @@ app.post("/api/ask", (req, res) => {
   }
 });
 
-/* ==== الإضافات المطلوبة ==== */
-// فحص الصحة/إيقاظ الخدمة
-app.get("/api/ping", (req, res) => {
-  res.json({ ok: true, ts: Date.now() });
-});
-
-// مُعالج أخطاء عام
-app.use((err, req, res, next) => {
-  console.error("ERR:", err);
-  res.status(500).json({ error: "server error" });
-});
-
-// تشغيل الخادم (يحترم PORT من Render)
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("AI server on", PORT));
+app.listen(PORT, () => console.log(`✅ AI Customs server running on port ${PORT}`));
