@@ -1,62 +1,58 @@
-const log = document.getElementById('log');
-const form = document.getElementById('chatForm');
-const input = document.getElementById('msg');
-const sendBtn = document.getElementById('sendBtn');
+const chat = document.getElementById("chat");
+const q    = document.getElementById("q");
+const sendBtn = document.getElementById("send");
 
-function addBubble(text, who = 'bot') {
-  const div = document.createElement('div');
-  div.className = 'bubble ' + (who === 'me' ? 'me' : 'bot');
-  div.innerHTML = text.replace(/\n/g, '<br>');
-  log.appendChild(div);
-  log.scrollTop = log.scrollHeight;
+function addBubble(who, text){
+  const d = document.createElement("div");
+  d.className = "bub " + (who === "user" ? "user" : "bot");
+  d.textContent = text;
+  chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight;
+}
+function addChip(text){
+  const b = document.createElement("button");
+  b.className = "chip";
+  b.textContent = text;
+  b.onclick = ()=> send(text);
+  chat.appendChild(b);
+  chat.scrollTop = chat.scrollHeight;
+}
+function addLink(title, href){
+  const a = document.createElement("a");
+  a.className = "calc";
+  a.href = href; a.target = "_blank"; a.textContent = title;
+  chat.appendChild(a);
+  chat.scrollTop = chat.scrollHeight;
 }
 
-// رسالة ترحيب خفيفة
-addBubble('أهلاً! اسألني مثل: كم جمارك الملابس، كم جمارك شاشة 50 بوصة، كم جمارك الحديد، كم جمارك البطاريات.');
+async function send(text=null){
+  const query = (text ?? q.value).trim();
+  if (!query) return;
+  addBubble("user", query);
+  q.value = ""; q.focus();
 
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const q = (input.value || '').trim();
-  if (!q) return;
-  addBubble(q, 'me');
-  input.value = '';
-  input.disabled = true;
-  sendBtn.disabled = true;
-
-  try {
-    // نفس الدومين/المسار الذي يقدمه الخادم (server.js)
-    const r = await fetch('/api/ask', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: q })
+  try{
+    const r = await fetch("/api/ask", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ query })
     });
+    const data = await r.json();
 
-    if (!r.ok) {
-      const txt = await r.text().catch(()=>'');
-      addBubble('تعذّر الاتصال بالخادم.\n' + (txt || (`HTTP ${r.status}`)));
-    } else {
-      const data = await r.json();
-      if (data.reply) addBubble(data.reply);
-      else if (data.ask) {
-        let t = data.ask;
-        if (data.choices && Array.isArray(data.choices)) {
-          t += '<br><br>خيارات: • ' + data.choices.join(' • ');
-        }
-        addBubble(t);
-      } else {
-        addBubble('لم أتلقَّ ردًا مفهومًا.');
-      }
+    if (data.reply) addBubble("bot", data.reply);
+    if (data.ask && !data.reply) addBubble("bot", data.ask);
 
-      if (data.openCalcUrl) {
-        addBubble(`<a href="${data.openCalcUrl}">فتح في الحاسبة</a>`);
-      }
-    }
-  } catch (err) {
-    addBubble('تعذّر الاتصال بالخادم.');
-    console.error(err);
-  } finally {
-    input.disabled = false;
-    sendBtn.disabled = false;
-    input.focus();
+    if (Array.isArray(data.choices)) data.choices.forEach(addChip);
+    if (Array.isArray(data.suggest)) data.suggest.forEach(addChip);
+
+    if (data.openCalcUrl) addLink("فتح في الحاسبة", data.openCalcUrl);
+  }catch(e){
+    addBubble("bot","تعذر الاتصال بالخادم.");
   }
-});
+}
+
+sendBtn.onclick = ()=> send();
+q.addEventListener("keydown",(e)=>{ if(e.key==="Enter"){ e.preventDefault(); send(); } });
+
+// ترحيب أولي
+addBubble("bot","أهلاً! اسألني مثل: كم جمارك الملابس، كم جمارك شاشة 50 بوصة، كم جمارك الحديد، كم جمارك البطاريات.");
