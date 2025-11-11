@@ -66,12 +66,10 @@ function refineRollItem(baseQuery, rollType) {
   const q = `${baseQuery} ${tokens.join(" ")}`.trim();
   const found = fuse.search(q);
   if (!found.length) return null;
-  // خذ أول نتيجة يكون اسمها يحتوي على أي من الكلمات المفتاحية
   for (const r of found) {
     const name = norm(r.item.name);
     if (tokens.some(t => name.includes(norm(t)))) return r.item;
   }
-  // fallback: أول نتيجة
   return found[0].item;
 }
 
@@ -235,5 +233,18 @@ app.post("/api/ask", (req, res) => {
   }
 });
 
+/* ==== الإضافات المطلوبة ==== */
+// فحص الصحة/إيقاظ الخدمة
+app.get("/api/ping", (req, res) => {
+  res.json({ ok: true, ts: Date.now() });
+});
+
+// مُعالج أخطاء عام
+app.use((err, req, res, next) => {
+  console.error("ERR:", err);
+  res.status(500).json({ error: "server error" });
+});
+
+// تشغيل الخادم (يحترم PORT من Render)
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("AI server on", PORT));
