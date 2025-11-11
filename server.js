@@ -2,20 +2,20 @@ import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
 import Fuse from "fuse.js";
+import fs from "fs";
 import {
   EXCHANGE_RATE_YER,
   CUSTOMS_FACTORS,
   SYNONYMS,
-  ITEM_INTENTS
+  ITEM_INTENTS,
+  ROLLS_TYPES
 } from "./config.js";
-import fs from "fs";
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static("public"));
 
-// تحميل الأسعار (الملف الرسمي + المحلي إن وجد)
 const pricesPath = "./prices/fallback_prices_catalog.json";
 let CATALOG = [];
 try {
@@ -25,25 +25,18 @@ try {
   CATALOG = [];
 }
 
-// أدوات مساعدة
-const norm = s =>
-  String(s || "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
+const norm = s => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
 
 function applySynonyms(q) {
   const w = norm(q).split(" ");
-  return w
-    .map(t => (SYNONYMS[t] ? SYNONYMS[t] : t))
-    .join(" ");
+  return w.map(t => (SYNONYMS[t] ? SYNONYMS[t] : t)).join(" ");
 }
 
 function parseRate(notes = "") {
   const s = notes.replace(/\s+/g, "");
   if (/الفئة?10%|10%/i.test(s)) return 10;
   if (/الفئة?5%|5%/i.test(s)) return 5;
-  return 10; // افتراضي نفس الحاسبة
+  return 10;
 }
 
 function usdToCustomsYer(usd, ratePct) {
@@ -51,64 +44,67 @@ function usdToCustomsYer(usd, ratePct) {
   return Math.round(usd * EXCHANGE_RATE_YER * factor);
 }
 
-// فوزي (Fuzzy) بضبط محكم
-const fuse = new Fuse(CATALOG, {
+let fuse = new Fuse(CATALOG, {
   keys: ["name", "notes"],
   includeScore: true,
-  threshold: 0.32,            // أكثر صرامة من قبل
+  threshold: 0.32,
   distance: 80
 });
 
-// يحدد نية/أسئلة مطلوبة من اسم/وصف الصنف
-function detectIntent(itemNameOrQuery) {
-  const q = norm(itemNameOrQuery);
+function detectIntent(text) {
+  const q = norm(text);
   for (const key of Object.keys(ITEM_INTENTS)) {
     if (q.includes(norm(key))) return ITEM_INTENTS[key];
   }
   return null;
 }
 
-// يحسب قيمة السلعة بالدولار حسب الوحدة المطلوبة
+// -- NEW: اختيار صنف الرولات حسب النوع (شفافة/مطبوعه)
+function refineRollItem(baseQuery, rollType) {
+  if (!rollType) return null;
+  const tokens = ROLLS_TYPES[rollType] || [];
+  const q = `${baseQuery} ${tokens.join(" ")}`.trim();
+  const found = fuse.search(q);
+  if (!found.length) return null;
+  // خذ أول نتيجة يكون اسمها يحتوي على أي من الكلمات المفتاحية
+  for (const r of found) {
+    const name = norm(r.item.name);
+    if (tokens.some(t => name.includes(norm(t)))) return r.item;
+  }
+  // fallback: أول نتيجة
+  return found[0].item;
+}
+
 function computeUSD(item, filled) {
-  // item.price هو "السعر لِـ الوحدة" (مثلاً للطن، للدرزن، للحبة...)
   const unit = item.unit || "pcs";
   const price = Number(item.price || 0);
   if (!(price > 0)) return 0;
 
-  // التلفزيون: بوصة × سعر/بوصة موجود في الكتالوج (سعر الحبة = سعر/بوصة)
   if (filled.kind === "tv") {
     const inches = Number(filled.inches || 0);
     if (!(inches > 0)) return NaN;
     return inches * price;
   }
 
-  // بالحبة أو بالكرتون
   if (filled.kind === "pcs") {
-    // إذا أرسل مباشر عدد حبات
     if (filled.count && Number(filled.count) > 0) return Number(filled.count) * price;
-
-    // بالكرتون: cartons × perCarton × price
     if (filled.cartons && filled.perCarton) {
       return Number(filled.cartons) * Number(filled.perCarton) * price;
     }
     return NaN;
   }
 
-  // درزن
   if (unit === "dz" || filled.kind === "dz") {
     if (filled.cartons && filled.dzPerCarton) {
       const dozens = Number(filled.cartons) * Number(filled.dzPerCarton);
       return dozens * price;
     }
-    if (filled.pieces) {
-      return (Number(filled.pieces) / 12) * price;
-    }
+    if (filled.pieces) return (Number(filled.pieces) / 12) * price;
     return NaN;
   }
 
-  // وزن: كجم/طن
-  if (filled.kind === "kgOrTon" || unit === "kg" || unit === "ton") {
-    // في الكتالوج سعر/طن — إن أرسل كجم نحوله إلى طن
+  // وزن (كجم/طن) — الرولات في قائمتك عادة للطن
+  if (filled.kind === "kgOrTon" || unit === "kg" || unit === "ton" || filled.kind === "rolls") {
     if (unit === "ton") {
       if (filled.kg) return (Number(filled.kg) / 1000) * price;
       if (filled.tons) return Number(filled.tons) * price;
@@ -120,39 +116,25 @@ function computeUSD(item, filled) {
     return NaN;
   }
 
-  // بطارية: النوع + الأمبير/ساعة × السعر لكل Ah (إن سجلته كذلك)
   if (filled.kind === "batteryTypeAh") {
-    if (!filled.batteryType) return NaN;
-    if (!(filled.ah > 0)) return NaN;
-    // السعر في الكتالوج يجب أن يكون "سعر لكل Ah" أو "سعر للبطارية" (في الحالة الثانية multiply by count)
-    if (unit === "Ah" || norm(item.unit) === "ah") {
-      return Number(filled.ah) * price;
-    }
-    if (unit === "pcs") {
-      // بطارية/حبة — لو عنده عدد حبات
-      const count = Number(filled.count || 1);
-      return count * price;
-    }
-    return NaN;
+    if (!filled.batteryType || !(filled.ah > 0)) return NaN;
+    if (unit.toLowerCase() === "ah") return Number(filled.ah) * price;
+    const count = Number(filled.count || 1);
+    return count * price;
   }
 
-  // افتراضي: كمية بسيطة
   if (filled.qty) return Number(filled.qty) * price;
-
   return NaN;
 }
 
-// تُرجع إما سؤال متابعة أو نتيجة
 function buildNextStepOrResult({ item, query, filled }) {
-  // لو ما عندنا “نية” واضحة، نحاول الاستنتاج من اسم الصنف نفسه
   const intent = detectIntent(item?.name || query) || { kind: null };
 
-  // أسئلة مطلوبة حسب النية
-  if (intent.kind === "tv") {
-    if (!filled.inches) {
-      return { ask: "كم بوصة للشاشة؟ (اكتب رقم مثل 32 أو 43)" };
-    }
-  } else if (intent.kind === "pcs") {
+  if (intent.kind === "tv" && !filled.inches) {
+    return { ask: "كم بوصة للشاشة؟ (اكتب رقم مثل 32 أو 43)" };
+  }
+
+  if (intent.kind === "pcs") {
     if (!filled.count && !(filled.cartons && filled.perCarton)) {
       return {
         ask: "أحسب بالحبة مباشرة أم بالكرتون؟",
@@ -162,7 +144,9 @@ function buildNextStepOrResult({ item, query, filled }) {
         ]
       };
     }
-  } else if (intent.kind === "dz") {
+  }
+
+  if (intent.kind === "dz") {
     if (!(filled.cartons && filled.dzPerCarton) && !filled.pieces) {
       return {
         ask: "أحسب بالدرزن أم بالحبات؟",
@@ -172,23 +156,31 @@ function buildNextStepOrResult({ item, query, filled }) {
         ]
       };
     }
-  } else if (intent.kind === "kgOrTon") {
+  }
+
+  if (intent.kind === "kgOrTon") {
     if (!filled.kg && !filled.tons) {
       return { ask: "تحب أحسب لك بالكيلو أم بالطن؟ (اكتب: كجم = 500 أو أطنان = 2)" };
     }
-  } else if (intent.kind === "batteryTypeAh") {
-    if (!filled.batteryType) {
-      return { ask: "نوع البطارية؟ (ليثيوم أم أسيد قابلة للصيانة)" };
+  }
+
+  // NEW: رولات — نحتاج النوع أولاً، ثم الوزن
+  if (intent.kind === "rolls") {
+    if (!filled.rollType) {
+      return {
+        ask: "نوع الرولات؟ (شفافة أم مطبوعة)",
+        choices: ["شفافة", "مطبوعه"]
+      };
     }
-    if (!filled.ah) {
-      return { ask: "كم الأمبير/ساعة للبطارية؟ (اكتب: Ah = 120 مثلًا)" };
+    if (!filled.kg && !filled.tons) {
+      return { ask: "تحب أحسب لك بالكيلو أم بالطن؟ (اكتب: كجم = 500 أو أطنان = 2)" };
     }
   }
 
-  // جميع الحقول الأساسية أصبحت موجودة — نحسب
+  // نحسب
   const usd = computeUSD(item, { ...filled, kind: intent.kind });
   if (!(usd > 0)) {
-    return { ask: "أحتاج تفاصيل أكثر لإكمال الحساب (أعد صياغة الإجابة فوق بنمط الحقول)." };
+    return { ask: "أحتاج تفاصيل أكثر لإكمال الحساب (أعد كتابة القيم بالنمط الموضح)." };
   }
   const ratePct = parseRate(item.notes);
   const yer = usdToCustomsYer(usd, ratePct);
@@ -204,29 +196,33 @@ function buildNextStepOrResult({ item, query, filled }) {
   };
 }
 
-// نقطة نهاية المحادثة
 app.post("/api/ask", (req, res) => {
   try {
     let { query, filled = {} } = req.body || {};
     if (!query) return res.status(400).json({ error: "query required" });
 
-    const q = applySynonyms(query);
-    const found = fuse.search(q);
+    const qSyn = applySynonyms(query);
+    let found = fuse.search(qSyn);
     if (!found.length || found[0].score > 0.45) {
       return res.json({ reply: "لم أجد هذا الصنف في القائمة. جرّب اسمًا أقرب أو افتح قائمة الأسعار." });
     }
 
-    const item = found[0].item;
+    let item = found[0].item;
 
-    const step = buildNextStepOrResult({ item, query: q, filled });
-    if (step.ask) {
-      return res.json({ ask: step.ask, choices: step.choices || null, matched: item.name });
+    // NEW: لو السؤال عن "رولات" ومعك rollType، نعيد الاختيار لصنف مطابق (شفافة/مطبوعه)
+    const intent = detectIntent(qSyn);
+    if (intent?.kind === "rolls" && filled.rollType) {
+      const refined = refineRollItem(qSyn, filled.rollType);
+      if (refined) item = refined;
     }
+
+    const step = buildNextStepOrResult({ item, query: qSyn, filled });
+    if (step.ask) return res.json({ ask: step.ask, choices: step.choices || null, matched: item.name });
 
     const r = step.result;
     const text =
       `السعر التقديري: ${r.usd}$ ⇒ رسوم تقريبية: ${r.yer.toLocaleString()} ريال يمني (فئة ${r.ratePct}%).\n` +
-      `استخدمت: سعر الصرف ${r.exchange} × معامل ${r.factor} من الفئة.\n` +
+      `استخدمت: سعر الصرف ${r.exchange} × معامل ${r.factor}.\n` +
       `الصنف: ${r.item.name} — الوحدة: ${r.item.unit}.`;
 
     return res.json({
