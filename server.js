@@ -1,257 +1,243 @@
 import express from "express";
 import cors from "cors";
+import bodyParser from "body-parser";
 import Fuse from "fuse.js";
+import {
+  EXCHANGE_RATE_YER,
+  CUSTOMS_FACTORS,
+  SYNONYMS,
+  ITEM_INTENTS
+} from "./config.js";
 import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 
-/* ===== مسارات أساسية ===== */
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const PUBLIC_DIR = path.join(__dirname, "public");
-const CATALOG_PATH = path.join(__dirname, "prices", "fallback_prices_catalog.json");
-
-/* ===== تحميل كتالوج الأسعار ===== */
-let catalog = [];
-try {
-  const raw = JSON.parse(fs.readFileSync(CATALOG_PATH, "utf8"));
-  catalog = Array.isArray(raw) ? raw : [];
-} catch (e) {
-  console.error("Catalog load error:", e.message);
-  catalog = [];
-}
-
-/* ===== تطبيع عربي مبسّط ===== */
-function normalizeArabic(s = "") {
-  return String(s)
-    .toLowerCase()
-    .replace(/[\u064B-\u0652]/g, "") // تشكيل
-    .replace(/ـ/g, "")               // مط
-    .replace(/[إأآا]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/ؤ/g, "و")
-    .replace(/ئ/g, "ي")
-    .replace(/ة/g, "ه")
-    .replace(/[^0-9\u0621-\u064A\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/* ===== مرادفات ===== */
-const SYNONYMS = {
-  "تلفزيون": ["تلفزيون","تلفز","شاشه","شاشة","شاشات","tv"],
-  "مودم": ["مودم","مودمات","راوتر","راوترات","mifi","مي فاي","مي فاي"],
-  "ملابس": ["ملابس","ثياب","تيشرت","قميص"],
-  "حديد": ["حديد","حديد تسليح","حديد بناء","مسامير حديد"],
-  "بطاريه": ["بطاريه","بطارية","بطاريات","بطاريـات"],
-  "ليثيوم": ["ليثيوم","lithium"],
-  "رصاص": ["رصاص","حمض","اسيد","lead acid","acid"]
-};
-
-/* enrich */
-const enriched = catalog.map((it) => {
-  const n = normalizeArabic(it.name || "");
-  let syn = [];
-  for (const arr of Object.values(SYNONYMS)) {
-    if (arr.some(x => n.includes(normalizeArabic(x)))) syn = syn.concat(arr);
-  }
-  return { ...it, _normName: n, synonyms: syn };
-});
-
-/* ===== فهرس Fuzzy ===== */
-const fuse = new Fuse(enriched, {
-  includeScore: true,
-  threshold: 0.39,
-  distance: 120,
-  ignoreLocation: true,
-  keys: ["name", "_normName", "synonyms"]
-});
-
-function fuzzyFindItem(text) {
-  const q = normalizeArabic(text);
-  const exact = enriched.find(x => x._normName.includes(q));
-  if (exact) return exact;
-  const res = fuse.search(q);
-  return res.length ? res[0].item : null;
-}
-
-/* ===== كشف النية ===== */
-function detectIntent(text) {
-  const t = normalizeArabic(text);
-  if (/(تلفز|شاشه|شاشة|شاشات|tv)/.test(t)) return "TV";
-  if (/(مودم|راوتر|mifi)/.test(t)) return "MODEM";
-  if (/(حديد)/.test(t)) return "IRON";
-  if (/(بطاريه|بطارية|بطاريات)/.test(t)) return "BATTERY";
-  if (/(ملابس|درزن|دزن)/.test(t)) return "CLOTHES";
-  return "CATALOG";
-}
-
-/* ===== أسئلة المتابعة حسب النية ===== */
-function followUp(intent, ctx = {}) {
-  switch (intent) {
-    case "TV":
-      if (!ctx.inches) return { ask: "كم بوصه للشاشه؟ (مثال: 32)", expect: "inches" };
-      return null;
-    case "MODEM":
-      if (!ctx.mode) return { ask: "أحسب لك (حبه) أم (كرتون)؟", expect: "mode", quick: ["حبه","كرتون"] };
-      if (ctx.mode === "كرتون" && !ctx.perCarton) return { ask: "كم حبه في الكرتون؟", expect: "perCarton" };
-      if (!ctx.count) return { ask: ctx.mode === "كرتون" ? "كم عدد الكراتين؟" : "كم عدد الحبات؟", expect: "count" };
-      return null;
-    case "IRON":
-      if (!ctx.kg) return { ask: "كم الوزن بالكيلو جرام؟", expect: "kg" };
-      return null;
-    case "BATTERY":
-      if (!ctx.chem) return { ask: "نوع البطاريه؟ (ليثيوم) أم (رصاص/اسيد)؟", expect: "chem", quick: ["ليثيوم","رصاص"] };
-      if (!ctx.ah) return { ask: "كم سعة كل بطاريه بالأمبير/ساعة (Ah)؟", expect: "ah" };
-      if (!ctx.count) return { ask: "كم عدد البطاريات؟", expect: "count" };
-      return null;
-    case "CLOTHES":
-      if (!ctx.mode) return { ask: "أحسب لك (بالدرزن) أم (بالكرتون)؟", expect: "mode", quick: ["درزن","كرتون"] };
-      if (ctx.mode === "كرتون" && !ctx.perCarton) return { ask: "كم درزن في الكرتون؟", expect: "perCarton" };
-      if (!ctx.count) return { ask: ctx.mode === "كرتون" ? "كم عدد الكراتين؟" : "كم عدد الدزن؟", expect: "count" };
-      return null;
-    default:
-      return null;
-  }
-}
-
-/* ===== حساب الرسوم ===== */
-function computeDutyYER({ usd, ratePct = 5, fx = 955.6 }) {
-  const duty = usd * (ratePct / 100) * fx;
-  return Math.round(duty);
-}
-
-/* ===== خادم ===== */
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(bodyParser.json());
+app.use(express.static("public"));
 
-/* جلسات بسيطة بالذاكرة */
-const SESS = new Map(); // sessionId -> {intent, ctx, lastItem}
+// تحميل الأسعار (الملف الرسمي + المحلي إن وجد)
+const pricesPath = "./prices/fallback_prices_catalog.json";
+let CATALOG = [];
+try {
+  const raw = fs.readFileSync(pricesPath, "utf8");
+  CATALOG = JSON.parse(raw);
+} catch (e) {
+  CATALOG = [];
+}
 
-/* واجهة المحادثة الذكية */
-app.post("/api/assist", (req, res) => {
-  const { sessionId = "default", text = "" } = req.body || {};
-  const session = SESS.get(sessionId) || { intent: null, ctx: {} };
+// أدوات مساعدة
+const norm = s =>
+  String(s || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 
-  if (!session.intent) session.intent = detectIntent(text);
+function applySynonyms(q) {
+  const w = norm(q).split(" ");
+  return w
+    .map(t => (SYNONYMS[t] ? SYNONYMS[t] : t))
+    .join(" ");
+}
 
-  // استخراج أرقام من النص
-  const norm = normalizeArabic(text);
-  const numberInText = (re) => {
-    const m = norm.match(re);
-    return m ? Number(m[1]) : null;
-  };
-  if (/بوصه|بوصة|inch|in/.test(norm)) session.ctx.inches = numberInText(/(\d+(?:\.\d+)?)/);
-  if (/(كيلو|كجم|وزن)/.test(norm)) session.ctx.kg = numberInText(/(\d+(?:\.\d+)?)/);
-  if (/(ah|امبير)/.test(norm)) session.ctx.ah = numberInText(/(\d+(?:\.\d+)?)/);
-  if (/(عدد|حبه|حبات|كرتون)/.test(norm)) session.ctx.count = numberInText(/(\d+(?:\.\d+)?)/);
-  if (/(درزن\/?كرتون|حبه\/?كرتون|بالكرتون)/.test(norm)) session.ctx.perCarton = numberInText(/(\d+(?:\.\d+)?)/);
+function parseRate(notes = "") {
+  const s = notes.replace(/\s+/g, "");
+  if (/الفئة?10%|10%/i.test(s)) return 10;
+  if (/الفئة?5%|5%/i.test(s)) return 5;
+  return 10; // افتراضي نفس الحاسبة
+}
 
-  if (/حبه|بالحبه/.test(norm)) session.ctx.mode = "حبه";
-  if (/كرتون|بالكرتون/.test(norm)) session.ctx.mode = "كرتون";
-  if (/ليثيوم/.test(norm)) session.ctx.chem = "ليثيوم";
-  if (/(رصاص|اسيد|حمض)/.test(norm)) session.ctx.chem = "رصاص";
+function usdToCustomsYer(usd, ratePct) {
+  const factor = CUSTOMS_FACTORS[String(ratePct)] ?? 0.265;
+  return Math.round(usd * EXCHANGE_RATE_YER * factor);
+}
 
-  // ابحث عن الصنف (تقريبي)
-  const item = fuzzyFindItem(text) || session.lastItem;
-  if (item) session.lastItem = item;
-
-  // أسئلة متابعة
-  const need = followUp(session.intent, session.ctx);
-  if (need) {
-    SESS.set(sessionId, session);
-    return res.json({ reply: need.ask, quick: need.quick || [] });
-  }
-
-  // حسابات
-  const fx = 955.6; // غيّره إن أردت
-  let usd = 0, ratePct = 5, explain = "";
-
-  switch (session.intent) {
-    case "TV": {
-      const inches = Number(session.ctx.inches);
-      const pricePer = inches < 40 ? 3 : 4;  // منطق الشاشات
-      usd = inches * pricePer;
-      ratePct = 5;
-      explain = `شاشه ${inches}" بسعر ${pricePer}$/بوصه.`;
-      break;
-    }
-    case "MODEM": {
-      if (!item) return res.json({ reply: "لم أجد الصنف في قائمتك. أضفه بقائمة الأسعار (وحدة: الحبة)." });
-      const unitPrice = Number(item.price || 0);
-      ratePct = (/10%/.test(item.notes||"")) ? 10 : 5;
-      if (session.ctx.mode === "كرتون") {
-        const per = Number(session.ctx.perCarton);
-        const cartons = Number(session.ctx.count);
-        usd = cartons * per * unitPrice;
-        explain = `حبه × ${per}/كرتون × ${cartons} كرتون.`;
-      } else {
-        const pcs = Number(session.ctx.count);
-        usd = pcs * unitPrice;
-        explain = `حبه × ${pcs}.`;
-      }
-      break;
-    }
-    case "IRON": {
-      if (!item) return res.json({ reply: "اكتب نوع الحديد الموجود في قائمتك (وحدة: kg) أو أضفه في الأسعار." });
-      const kg = Number(session.ctx.kg);
-      const pricePerKg = Number(item.price || 0);
-      usd = kg * pricePerKg;
-      ratePct = (/10%/.test(item.notes||"")) ? 10 : 5;
-      explain = `سعر/كجم × ${kg} كجم.`;
-      break;
-    }
-    case "BATTERY": {
-      if (!item || !(item.unit === "Ah" || /ah/i.test(item.unit||""))) {
-        return res.json({ reply: "أضف صنفًا في قائمتك لوحدة (Ah) وسعرها/لكل Ah للبطاريات، ثم أعد السؤال." });
-      }
-      const perAhUSD = Number(item.price || 0);
-      const ah = Number(session.ctx.ah);
-      const count = Number(session.ctx.count || 1);
-      usd = perAhUSD * ah * count;
-      ratePct = (/10%/.test(item.notes||"")) ? 10 : 5;
-      explain = `سعر/Ah × ${ah}Ah × ${count} (${session.ctx.chem}).`;
-      break;
-    }
-    case "CLOTHES": {
-      if (!item) return res.json({ reply: "أضف صنف الملابس (وحدة: الدرزن) في قائمتك ثم أعد السؤال." });
-      const pricePerDz = Number(item.price || 0);
-      ratePct = (/10%/.test(item.notes||"")) ? 10 : 5;
-      if (session.ctx.mode === "كرتون") {
-        const perDz = Number(session.ctx.perCarton);
-        const cartons = Number(session.ctx.count);
-        usd = cartons * perDz * pricePerDz;
-        explain = `سعر/درزن × ${perDz} درزن/كرتون × ${cartons} كرتون.`;
-      } else {
-        const dz = Number(session.ctx.count);
-        usd = dz * pricePerDz;
-        explain = `سعر/درزن × ${dz} درزن.`;
-      }
-      break;
-    }
-    default: {
-      if (!item) {
-        return res.json({ reply: "لم أجد هذا الصنف في القائمة. اكتب الاسم أو أضفه كمدخل جديد في الأسعار." });
-      }
-      usd = Number(item.price || 0);
-      ratePct = (/10%/.test(item.notes||"")) ? 10 : 5;
-      explain = `استخدمت السعر المسجل: ${item.name}.`;
-    }
-  }
-
-  const yer = computeDutyYER({ usd, ratePct, fx });
-  SESS.set(sessionId, { intent: null, ctx: {}, lastItem: item });
-
-  res.json({
-    reply: `السعر التقريبي: $${usd.toFixed(2)} ⇒ رسوم تقريبية: ${yer} ريال يمني (فئة ${ratePct}%).\n${explain}`,
-    open_calc: `./index.html?price=${encodeURIComponent(usd)}&qty=1&ratePct=${ratePct}`
-  });
+// فوزي (Fuzzy) بضبط محكم
+const fuse = new Fuse(CATALOG, {
+  keys: ["name", "notes"],
+  includeScore: true,
+  threshold: 0.32,            // أكثر صرامة من قبل
+  distance: 80
 });
 
-/* ملفات الواجهة */
-app.use(express.static(PUBLIC_DIR));
-app.get("/", (_, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
+// يحدد نية/أسئلة مطلوبة من اسم/وصف الصنف
+function detectIntent(itemNameOrQuery) {
+  const q = norm(itemNameOrQuery);
+  for (const key of Object.keys(ITEM_INTENTS)) {
+    if (q.includes(norm(key))) return ITEM_INTENTS[key];
+  }
+  return null;
+}
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log("AI Assistant running on :" + PORT));
+// يحسب قيمة السلعة بالدولار حسب الوحدة المطلوبة
+function computeUSD(item, filled) {
+  // item.price هو "السعر لِـ الوحدة" (مثلاً للطن، للدرزن، للحبة...)
+  const unit = item.unit || "pcs";
+  const price = Number(item.price || 0);
+  if (!(price > 0)) return 0;
+
+  // التلفزيون: بوصة × سعر/بوصة موجود في الكتالوج (سعر الحبة = سعر/بوصة)
+  if (filled.kind === "tv") {
+    const inches = Number(filled.inches || 0);
+    if (!(inches > 0)) return NaN;
+    return inches * price;
+  }
+
+  // بالحبة أو بالكرتون
+  if (filled.kind === "pcs") {
+    // إذا أرسل مباشر عدد حبات
+    if (filled.count && Number(filled.count) > 0) return Number(filled.count) * price;
+
+    // بالكرتون: cartons × perCarton × price
+    if (filled.cartons && filled.perCarton) {
+      return Number(filled.cartons) * Number(filled.perCarton) * price;
+    }
+    return NaN;
+  }
+
+  // درزن
+  if (unit === "dz" || filled.kind === "dz") {
+    if (filled.cartons && filled.dzPerCarton) {
+      const dozens = Number(filled.cartons) * Number(filled.dzPerCarton);
+      return dozens * price;
+    }
+    if (filled.pieces) {
+      return (Number(filled.pieces) / 12) * price;
+    }
+    return NaN;
+  }
+
+  // وزن: كجم/طن
+  if (filled.kind === "kgOrTon" || unit === "kg" || unit === "ton") {
+    // في الكتالوج سعر/طن — إن أرسل كجم نحوله إلى طن
+    if (unit === "ton") {
+      if (filled.kg) return (Number(filled.kg) / 1000) * price;
+      if (filled.tons) return Number(filled.tons) * price;
+    }
+    if (unit === "kg") {
+      if (filled.kg) return Number(filled.kg) * price;
+      if (filled.tons) return Number(filled.tons) * 1000 * price;
+    }
+    return NaN;
+  }
+
+  // بطارية: النوع + الأمبير/ساعة × السعر لكل Ah (إن سجلته كذلك)
+  if (filled.kind === "batteryTypeAh") {
+    if (!filled.batteryType) return NaN;
+    if (!(filled.ah > 0)) return NaN;
+    // السعر في الكتالوج يجب أن يكون "سعر لكل Ah" أو "سعر للبطارية" (في الحالة الثانية multiply by count)
+    if (unit === "Ah" || norm(item.unit) === "ah") {
+      return Number(filled.ah) * price;
+    }
+    if (unit === "pcs") {
+      // بطارية/حبة — لو عنده عدد حبات
+      const count = Number(filled.count || 1);
+      return count * price;
+    }
+    return NaN;
+  }
+
+  // افتراضي: كمية بسيطة
+  if (filled.qty) return Number(filled.qty) * price;
+
+  return NaN;
+}
+
+// تُرجع إما سؤال متابعة أو نتيجة
+function buildNextStepOrResult({ item, query, filled }) {
+  // لو ما عندنا “نية” واضحة، نحاول الاستنتاج من اسم الصنف نفسه
+  const intent = detectIntent(item?.name || query) || { kind: null };
+
+  // أسئلة مطلوبة حسب النية
+  if (intent.kind === "tv") {
+    if (!filled.inches) {
+      return { ask: "كم بوصة للشاشة؟ (اكتب رقم مثل 32 أو 43)" };
+    }
+  } else if (intent.kind === "pcs") {
+    if (!filled.count && !(filled.cartons && filled.perCarton)) {
+      return {
+        ask: "أحسب بالحبة مباشرة أم بالكرتون؟",
+        choices: [
+          "بالحبة — اكتب: عدد الحبات = 24",
+          "بالكرتون — اكتب: الكراتين = 2 و الحبات/كرتون = 12"
+        ]
+      };
+    }
+  } else if (intent.kind === "dz") {
+    if (!(filled.cartons && filled.dzPerCarton) && !filled.pieces) {
+      return {
+        ask: "أحسب بالدرزن أم بالحبات؟",
+        choices: [
+          "بالكرتون/درزن — اكتب: الكراتين = 3 و الدزن/كرتون = 10",
+          "بالحبات — اكتب: الحبات = 120"
+        ]
+      };
+    }
+  } else if (intent.kind === "kgOrTon") {
+    if (!filled.kg && !filled.tons) {
+      return { ask: "تحب أحسب لك بالكيلو أم بالطن؟ (اكتب: كجم = 500 أو أطنان = 2)" };
+    }
+  } else if (intent.kind === "batteryTypeAh") {
+    if (!filled.batteryType) {
+      return { ask: "نوع البطارية؟ (ليثيوم أم أسيد قابلة للصيانة)" };
+    }
+    if (!filled.ah) {
+      return { ask: "كم الأمبير/ساعة للبطارية؟ (اكتب: Ah = 120 مثلًا)" };
+    }
+  }
+
+  // جميع الحقول الأساسية أصبحت موجودة — نحسب
+  const usd = computeUSD(item, { ...filled, kind: intent.kind });
+  if (!(usd > 0)) {
+    return { ask: "أحتاج تفاصيل أكثر لإكمال الحساب (أعد صياغة الإجابة فوق بنمط الحقول)." };
+  }
+  const ratePct = parseRate(item.notes);
+  const yer = usdToCustomsYer(usd, ratePct);
+  return {
+    result: {
+      usd: Number(usd.toFixed(2)),
+      ratePct,
+      yer,
+      exchange: EXCHANGE_RATE_YER,
+      factor: CUSTOMS_FACTORS[String(ratePct)] ?? 0.265,
+      item: { name: item.name, unit: item.unit, notes: item.notes, price: item.price }
+    }
+  };
+}
+
+// نقطة نهاية المحادثة
+app.post("/api/ask", (req, res) => {
+  try {
+    let { query, filled = {} } = req.body || {};
+    if (!query) return res.status(400).json({ error: "query required" });
+
+    const q = applySynonyms(query);
+    const found = fuse.search(q);
+    if (!found.length || found[0].score > 0.45) {
+      return res.json({ reply: "لم أجد هذا الصنف في القائمة. جرّب اسمًا أقرب أو افتح قائمة الأسعار." });
+    }
+
+    const item = found[0].item;
+
+    const step = buildNextStepOrResult({ item, query: q, filled });
+    if (step.ask) {
+      return res.json({ ask: step.ask, choices: step.choices || null, matched: item.name });
+    }
+
+    const r = step.result;
+    const text =
+      `السعر التقديري: ${r.usd}$ ⇒ رسوم تقريبية: ${r.yer.toLocaleString()} ريال يمني (فئة ${r.ratePct}%).\n` +
+      `استخدمت: سعر الصرف ${r.exchange} × معامل ${r.factor} من الفئة.\n` +
+      `الصنف: ${r.item.name} — الوحدة: ${r.item.unit}.`;
+
+    return res.json({
+      reply: text,
+      openCalcUrl: `/index.html?price=${encodeURIComponent(r.usd)}&qty=1&ratePct=${r.ratePct}`
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("AI server on", PORT));
