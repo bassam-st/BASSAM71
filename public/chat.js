@@ -1,58 +1,38 @@
-const chat = document.getElementById("chat");
-const q    = document.getElementById("q");
-const sendBtn = document.getElementById("send");
+const log = document.getElementById("log");
+const form = document.getElementById("f");
+const q = document.getElementById("q");
 
-function addBubble(who, text){
-  const d = document.createElement("div");
-  d.className = "bub " + (who === "user" ? "user" : "bot");
-  d.textContent = text;
-  chat.appendChild(d);
-  chat.scrollTop = chat.scrollHeight;
-}
-function addChip(text){
-  const b = document.createElement("button");
-  b.className = "chip";
-  b.textContent = text;
-  b.onclick = ()=> send(text);
-  chat.appendChild(b);
-  chat.scrollTop = chat.scrollHeight;
-}
-function addLink(title, href){
-  const a = document.createElement("a");
-  a.className = "calc";
-  a.href = href; a.target = "_blank"; a.textContent = title;
-  chat.appendChild(a);
-  chat.scrollTop = chat.scrollHeight;
+function bubble(text, who="ai"){
+  const div = document.createElement("div");
+  div.className = "bubble " + (who==="me"?"me":"ai");
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
 }
 
-async function send(text=null){
-  const query = (text ?? q.value).trim();
-  if (!query) return;
-  addBubble("user", query);
-  q.value = ""; q.focus();
-
+form.addEventListener("submit", async (e)=>{
+  e.preventDefault();
+  const text = q.value.trim();
+  if(!text) return;
+  bubble(text, "me");
+  q.value = "";
   try{
     const r = await fetch("/api/ask", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ query })
+      body: JSON.stringify({ query: text })
     });
     const data = await r.json();
-
-    if (data.reply) addBubble("bot", data.reply);
-    if (data.ask && !data.reply) addBubble("bot", data.ask);
-
-    if (Array.isArray(data.choices)) data.choices.forEach(addChip);
-    if (Array.isArray(data.suggest)) data.suggest.forEach(addChip);
-
-    if (data.openCalcUrl) addLink("فتح في الحاسبة", data.openCalcUrl);
-  }catch(e){
-    addBubble("bot","تعذر الاتصال بالخادم.");
+    if(data.ask){
+      bubble(data.ask + (data.choices? ("\nخيارات: " + data.choices.join(" | ")) : ""));
+    } else if (data.reply){
+      bubble(data.reply + (data.openCalcUrl? ("\nفتح في الحاسبة: " + data.openCalcUrl) : ""));
+    } else if (data.error){
+      bubble("خطأ: " + data.error);
+    } else {
+      bubble("تعذّر فهم الرد.");
+    }
+  }catch(err){
+    bubble("تعذر الاتصال بالخادم.");
   }
-}
-
-sendBtn.onclick = ()=> send();
-q.addEventListener("keydown",(e)=>{ if(e.key==="Enter"){ e.preventDefault(); send(); } });
-
-// ترحيب أولي
-addBubble("bot","أهلاً! اسألني مثل: كم جمارك الملابس، كم جمارك شاشة 50 بوصة، كم جمارك الحديد، كم جمارك البطاريات.");
+});
