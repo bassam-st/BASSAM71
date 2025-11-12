@@ -1,21 +1,15 @@
 {
   "name": "bassam-ai-assistant",
   "version": "1.0.0",
-  "description": "مساعد بسّام الذكي — نظام محادثة ذكي لحساب الجمارك وتحليل الأسعار",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "cors": "^2.8.5",
     "body-parser": "^1.20.2",
-    "cookie-parser": "^1.4.7",
-    "fuse.js": "^7.0.0",
-    "fs-extra": "^11.2.0"
-  },
-  "engines": {
-    "node": ">=18.x"
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "fuse.js": "^7.0.0"
   }
 }
