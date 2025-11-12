@@ -2,34 +2,37 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>مساعد بسّام الذكي — تجريبي</title>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Tahoma,Arial;background:#f5f7fb;margin:0}
-    .wrap{max-width:720px;margin:24px auto;background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.08);overflow:hidden}
-    .head{background:#17a34a;color:#fff;padding:16px 20px;font-size:20px;font-weight:700;display:flex;align-items:center;gap:8px}
-    .log{padding:16px;min-height:50vh;display:flex;flex-direction:column;gap:12px}
-    .bubble{padding:12px 14px;border-radius:12px;max-width:95%}
-    .me{background:#e9f5ee;align-self:flex-start}
-    .ai{background:#dff7e6;align-self:flex-end}
-    form{display:flex;gap:10px;padding:12px;border-top:1px solid #eee;background:#fff;position:sticky;bottom:0}
-    input[type=text]{flex:1;padding:12px 14px;border:2px solid #e5e7eb;border-radius:12px;font-size:16px}
-    button{background:#16a34a;color:#fff;border:0;border-radius:12px;padding:12px 20px;font-weight:700}
-    .hint{padding:0 16px 12px;color:#6b7280;font-size:13px}
+    body{font-family:system-ui,Segoe UI,Tahoma; background:#f6f7fb; margin:0}
+    .wrap{max-width:840px; margin:20px auto; background:#fff; border-radius:16px; padding:16px 16px 80px; box-shadow:0 8px 24px rgba(0,0,0,.08)}
+    .head{background:#0b7f3f; color:#fff; padding:16px; border-radius:12px; margin-bottom:16px; text-align:center; font-weight:700}
+    .msg{border-radius:12px; padding:12px; margin:8px 0; line-height:1.7}
+    .bot{background:#e7fff0}
+    .you{background:#eef3ff; text-align:right}
+    form{position:fixed; bottom:12px; left:0; right:0; display:flex; gap:8px; justify-content:center}
+    form .box{width:840px; max-width:calc(100% - 120px); display:flex; background:#fff; padding:8px 12px; border:2px solid #ddd; border-radius:48px}
+    input{flex:1; font-size:16px; border:none; outline:none}
+    button{background:#0b7f3f; color:#fff; border:none; padding:12px 22px; border-radius:48px; font-size:16px}
+    a{color:#0a56d8; text-decoration:none}
+    .hint{font-size:12px; color:#777; text-align:center; margin-top:6px}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="head">🤝 مساعد بسّام الذكي — تجريبي</div>
-    <div id="log" class="log">
-      <div class="bubble ai">أهلًا! اسألني مثل: كم جمارك الملابس، كم جمارك شاشة 50 بوصة، كم جمارك الحديد، كم جمارك البطاريات.</div>
-    </div>
-    <form id="f">
-      <button type="submit">إرسال</button>
-      <input id="q" type="text" placeholder="اسأل: كم جمارك الملابس أو التلفزيونات..." />
-    </form>
-    <div class="hint">نصيحة: افتح <a href="/api/ping/" target="_blank">api/ping/</a> للتأكد أن الخادم شغال.</div>
+    <div id="chat"></div>
+    <div class="hint">نصيحة: افتح <a href="/api/ping/" target="_blank">/api/ping/</a> للتأكد أن الخادم شغّال.</div>
   </div>
-  <script src="chat.js"></script>
+
+  <form id="f">
+    <div class="box">
+      <input id="q" placeholder="اسأل: كم جمارك الملابس أو التلفزيونات..." />
+    </div>
+    <button>إرسال</button>
+  </form>
+
+  <script src="/chat.js"></script>
 </body>
 </html>
