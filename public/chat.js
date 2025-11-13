@@ -1,70 +1,110 @@
-const chat = document.getElementById("chat");
-const form = document.getElementById("f");
-const qEl  = document.getElementById("q");
+const elChat = document.getElementById("chat");
+const elQ = document.getElementById("q");
+const elSend = document.getElementById("send");
 
-// عرض رسالة
-function push(text, who="bot"){
-  const div = document.createElement("div");
-  div.className = `msg ${who==="you"?"you":"bot"}`;
-  div.innerText = text;
-  chat.appendChild(div);
-  div.scrollIntoView({behavior:"smooth", block:"end"});
+let filled = {}; // ذاكرة الجلسة
+
+function addMsg(text, cls="bot") {
+  const d = document.createElement("div");
+  d.className = `msg ${cls}`;
+  d.textContent = text;
+  elChat.appendChild(d);
+  elChat.scrollTop = elChat.scrollHeight;
 }
 
-// بداية
-push("أهلًا! اسألني مثل: كم جمارك الملابس، كم جمارك شاشة 50 بوصة، كم جمارك الحديد، كم جمارك البطاريات.");
+// تحويل “خيار = قيمة” إلى تحديث للذاكرة
+function parseAssignment(s) {
+  // أمثلة: "عدد الحبات = 24"  |  "الكراتين = 2 و الحبات/كرتون = 12"
+  const parts = s.split("و").map(p => p.trim());
+  for (const p of parts) {
+    const m1 = p.match(/(عدد الحبات|الحبات|عدد) ?= ?(\d+)/);
+    if (m1) { filled.count = Number(m1[2]); continue; }
 
-let filled = {}; // حالة الجلسة
+    const m2 = p.match(/الكراتين ?= ?(\d+)/);
+    if (m2) { filled.cartons = Number(m2[1]); continue; }
 
-form.addEventListener("submit", async (e)=>{
-  e.preventDefault();
-  const query = (qEl.value||"").trim();
-  if(!query) return;
-  push(query,"you");
-  qEl.value = "";
+    const m3 = p.match(/الحبات\/كرتون ?= ?(\d+)/);
+    if (m3) { filled.perCarton = Number(m3[1]); continue; }
 
-  try{
-    const r = await fetch("/api/ask", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ query, filled })
-    });
-    const data = await r.json();
+    const m4 = p.match(/الدزن\/كرتون ?= ?(\d+)/);
+    if (m4) { filled.dzPerCarton = Number(m4[1]); continue; }
 
-    if(data.ask){
-      push(data.ask);
-      if(data.choices && Array.isArray(data.choices)){
-        push("خيارات: " + data.choices.join(" • "));
-      }
-      // حفظ سياق بسيط لو احتجنا
-      if(data.context) filled = {...filled, ...data.context};
-      return;
-    }
+    const m5 = p.match(/الحبات ?= ?(\d+)/);
+    if (m5) { filled.pieces = Number(m5[1]); continue; }
 
-    if(data.reply){
-      push(data.reply);
-      if(data.openCalcUrl){
-        const a = document.createElement("a");
-        a.href = data.openCalcUrl;
-        a.innerText = "فتح في الحاسبة";
-        a.target = "_blank";
-        const div = document.createElement("div");
-        div.className = "msg bot";
-        div.appendChild(a);
-        chat.appendChild(div);
-      }
-      filled = {}; // ننهي الجلسة
-      return;
-    }
+    const m6 = p.match(/كجم ?= ?(\d+)/);
+    if (m6) { filled.kg = Number(m6[1]); continue; }
 
-    if(data.suggestions){
-      push(`لم أجد هذا الصنف في القائمة. أقرب نتائج: ${data.suggestions.join("، ")}`);
-      if(data.taught){ push("✔ تم حفظ الاسم الذي كتبته كمرادف للصنف الأقرب للمرة القادمة."); }
-      return;
-    }
+    const m7 = p.match(/أطنان ?= ?(\d+)/);
+    if (m7) { filled.tons = Number(m7[1]); continue; }
 
-    if(data.error){ push("تعذّر الاتصال بالخادم."); }
-  }catch(err){
-    push("تعذّر الاتصال بالخادم.");
+    const m8 = p.match(/أمبير ?= ?(\d+)/);
+    if (m8) { filled.ah = Number(m8[1]); continue; }
+
+    const m9 = p.match(/عدد ?= ?(\d+)/);
+    if (m9) { filled.count = Number(m9[1]); continue; }
+
+    // البوصة مجرد رقم مستقل
+    const m10 = p.match(/^(\d{2})$/);
+    if (m10) { filled.inches = Number(m10[1]); }
   }
+}
+
+async function send(q) {
+  addMsg(q, "you");
+
+  // محاولة فهم إدخال المستخدم كـ “قيم” لاستكمال الحساب
+  parseAssignment(q);
+
+  const r = await fetch("/api/ask", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query: q, filled })
+  }).then(x => x.json());
+
+  if (r.ask) {
+    addMsg(r.ask);
+    if (r.choices && r.choices.length) {
+      // عرض الأزرار السريعة
+      const wrap = document.createElement("div");
+      wrap.className = "msg bot";
+      r.choices.forEach(c => {
+        const b = document.createElement("button");
+        b.textContent = c;
+        b.style.marginInlineEnd = "8px";
+        b.onclick = () => {
+          addMsg(c, "you");
+          parseAssignment(c);
+        };
+        wrap.appendChild(b);
+      });
+      elChat.appendChild(wrap);
+      elChat.scrollTop = elChat.scrollHeight;
+    }
+    return;
+  }
+
+  if (r.reply) {
+    addMsg(r.reply);
+    if (r.openCalcUrl) {
+      const d = document.createElement("div");
+      d.className = "msg bot";
+      d.innerHTML = `<a href="${r.openCalcUrl}">فتح في الحاسبة</a>`;
+      elChat.appendChild(d);
+    }
+  } else if (r.error) {
+    addMsg("تعذر الاتصال بالخادم.");
+  }
+}
+
+elSend.onclick = () => {
+  if (!elQ.value.trim()) return;
+  send(elQ.value.trim());
+  elQ.value = "";
+};
+elQ.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") elSend.click();
 });
+
+// تحية أولى
+addMsg("أهلًا! اسألني مثل: كم جمارك الملابس، كم جمارك شاشة 50 بوصة، كم جمارك الحديد، كم جمارك البطاريات.");
